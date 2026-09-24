@@ -83,7 +83,10 @@
         </div>
         <div class="controls-head">
           <div class="controls-title"><span id="presetName">オリジナル</span><small id="presetDesc"></small></div>
-          <button id="btnResetPreset" class="btn small" title="このプリセットのスライダーを初期値に戻す">リセット</button>
+          <div class="head-actions">
+            <button id="btnFav" class="btn small fav-btn" type="button" aria-pressed="false" hidden></button>
+            <button id="btnResetPreset" class="btn small" title="このプリセットのスライダーを初期値に戻す">リセット</button>
+          </div>
         </div>
         <div id="presetControls" class="sliders"></div>
       </div>

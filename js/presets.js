@@ -323,7 +323,7 @@ export const PRESETS = [
     ['contrast', 'saturation', 'vibrance', 'shadows']),
   P('perlin_soft', 'パーリンノイズ＋ソフトぼかし', 'illust',
     'パーリンノイズで質感を足しつつ、ぼかしコピーを薄く重ねて柔らかく馴染ませる組み合わせ。',
-    { grain: 0.2, grainType: 1, grainSize: 5, glow: 0.3, glowMode: 4, blurRadius: 0.01, lineKeep: 0.5 },
+    { grain: 0.2, grainType: 1, grainSize: 1.5, glow: 0.3, glowMode: 4, blurRadius: 0.01, lineKeep: 0.5 },
     ['grain', 'grainSize', 'glow', 'blurRadius']),
 
   // ---------------- セルルック (Cel look) ----------------
