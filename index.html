@@ -27,6 +27,9 @@
     <button id="btnSplit" class="btn toggle" title="分割表示 (左: 元画像 / 右: 補正後)" disabled aria-pressed="false">
       <svg viewBox="0 0 24 24"><rect x="3.5" y="5" width="17" height="14" rx="2" fill="none" stroke="currentColor" stroke-width="1.8"/><path d="M12 5v14" stroke="currentColor" stroke-width="1.8"/></svg><span>分割</span>
     </button>
+    <button id="btnSide" class="btn toggle" title="並べて表示 (元画像 / 補正後)" disabled aria-pressed="false">
+      <svg viewBox="0 0 24 24"><rect x="2.5" y="6" width="8.5" height="12" rx="1.5" fill="none" stroke="currentColor" stroke-width="1.8"/><rect x="13" y="6" width="8.5" height="12" rx="1.5" fill="currentColor" opacity=".5" stroke="currentColor" stroke-width="1.8"/></svg><span>並べて</span>
+    </button>
     <button id="btnExport" class="btn primary" title="書き出し" disabled>
       <svg viewBox="0 0 24 24"><path d="M12 4v11m0 0-4-4m4 4 4-4M5 19h14" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/></svg><span>書き出し</span>
     </button>
@@ -40,8 +43,14 @@
 
 <main class="workspace">
   <section id="viewer" class="viewer">
-    <canvas id="glcanvas"></canvas>
-    <div id="splitHandle" class="split-handle" hidden><div class="split-line"></div><div class="split-knob"></div></div>
+    <div id="stage" class="stage">
+      <div id="origPane" class="pane" hidden><canvas id="origcanvas"></canvas><span class="pane-label">元画像</span></div>
+      <div id="gradedPane" class="pane">
+        <canvas id="glcanvas"></canvas>
+        <span class="pane-label graded-label">補正後</span>
+        <div id="splitHandle" class="split-handle" hidden><div class="split-line"></div><div class="split-knob"></div></div>
+      </div>
+    </div>
     <div id="dropzone" class="dropzone">
       <div class="dz-inner">
         <svg viewBox="0 0 48 48" width="56" height="56"><rect x="6" y="10" width="36" height="28" rx="3" fill="none" stroke="currentColor" stroke-width="2"/><circle cx="17" cy="20" r="3.5" fill="currentColor"/><path d="M8 35l11-11 8 8 5-5 8 8" fill="none" stroke="currentColor" stroke-width="2" stroke-linejoin="round"/></svg>
@@ -68,6 +77,10 @@
       <div id="categories" class="chips"></div>
       <div id="presetGrid" class="preset-grid"></div>
       <div class="controls">
+        <div id="stackBar" class="stack-bar" hidden>
+          <div class="stack-head"><span>重ねがけ中</span><button id="btnClearStack" class="btn small">すべて解除</button></div>
+          <div id="stackList" class="stack-list"></div>
+        </div>
         <div class="controls-head">
           <div class="controls-title"><span id="presetName">オリジナル</span><small id="presetDesc"></small></div>
           <button id="btnResetPreset" class="btn small" title="このプリセットのスライダーを初期値に戻す">リセット</button>

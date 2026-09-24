@@ -94,7 +94,15 @@ svg { display: block; }
   overflow: hidden;
   touch-action: none;
 }
-#glcanvas { display: block; max-width: 100%; max-height: 100%; box-shadow: var(--shadow); }
+#glcanvas, #origcanvas { display: block; max-width: 100%; max-height: 100%; box-shadow: var(--shadow); }
+.stage { display: flex; align-items: center; justify-content: center; gap: 8px; max-width: 100%; max-height: 100%; }
+.stage.vertical { flex-direction: column; }
+.pane { position: relative; display: flex; }
+.pane-label {
+  display: none; position: absolute; left: 6px; top: 6px; font-size: 11px; padding: 2px 7px; border-radius: 5px;
+  background: rgba(0,0,0,.55); color: #fff; pointer-events: none;
+}
+.stage.side .pane-label { display: block; }
 #glcanvas.hidden { visibility: hidden; }
 .viewer-info {
   position: absolute; left: 10px; bottom: 10px;
@@ -120,6 +128,7 @@ svg { display: block; }
 /* split view */
 .split-handle {
   position: absolute; top: 0; bottom: 0; width: 40px; margin-left: -20px;
+  left: 50%;
   cursor: ew-resize; touch-action: none; z-index: 3;
 }
 .split-line { position: absolute; left: 50%; top: 0; bottom: 0; width: 2px; margin-left: -1px; background: #fff; box-shadow: 0 0 0 1px rgba(0,0,0,.5); }
@@ -176,12 +185,40 @@ svg { display: block; }
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
 .preset-card.active { border-color: var(--accent); }
+.preset-card.stacked:not(.active) { border-color: var(--muted); }
+.preset-card .badge {
+  position: absolute; left: 4px; top: 4px; min-width: 18px; height: 18px; padding: 0 5px; border-radius: 9px;
+  background: var(--accent); color: var(--accent-text); font-size: 11px; font-weight: 700;
+  display: flex; align-items: center; justify-content: center; pointer-events: none;
+}
+.preset-card .star {
+  position: absolute; right: 2px; top: 2px; width: 26px; height: 26px; border: 0; border-radius: 50%;
+  background: transparent; color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity .12s; filter: drop-shadow(0 1px 2px rgba(0,0,0,.8));
+}
+.preset-card .star svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
+.preset-card:hover .star, .preset-card:focus-within .star, .preset-card.fav .star { opacity: 1; }
+.preset-card.fav .star svg { fill: #fff; }
+@media (hover: none) { .preset-card .star { opacity: .7; } }
 .preset-card:focus-visible { border-color: var(--muted); }
 
 .controls {
   flex: 1 1 45%; min-height: 0; display: flex; flex-direction: column;
   border-top: 1px solid var(--border); background: var(--panel);
 }
+.stack-bar { padding: 8px 12px 0; flex: none; border-bottom: 1px dashed var(--border); padding-bottom: 8px; }
+.stack-head { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--muted); margin-bottom: 6px; }
+.stack-list { display: flex; flex-wrap: wrap; gap: 6px; max-height: 76px; overflow-y: auto; }
+.stack-chip {
+  display: inline-flex; align-items: center; gap: 4px; height: 26px; padding: 0 4px 0 6px; border-radius: 6px;
+  border: 1px solid var(--border); background: var(--surface); font-size: 11.5px; cursor: pointer; max-width: 100%;
+}
+.stack-chip.active { border-color: var(--accent); box-shadow: inset 0 0 0 1px var(--accent); }
+.stack-chip .n { font-weight: 700; color: var(--muted); }
+.stack-chip .t { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 140px; }
+.stack-chip button { border: 0; background: transparent; width: 20px; height: 22px; border-radius: 4px; cursor: pointer; color: var(--muted); padding: 0; font-size: 14px; line-height: 1; }
+.stack-chip button:hover:not(:disabled) { background: var(--surface-2); color: var(--text); }
+.stack-chip button:disabled { opacity: .3; cursor: default; }
 .controls-head { display: flex; align-items: center; justify-content: space-between; gap: 8px; padding: 8px 12px 4px; flex: none; }
 .controls-head.pad { padding-top: 10px; }
 .controls-title { min-width: 0; display: flex; flex-direction: column; }
@@ -250,6 +287,8 @@ select {
   .preset-grid::-webkit-scrollbar { display: none; }
   .preset-grid { grid-auto-rows: 100%; }
   .controls { flex: 1 1 auto; }
+  .stack-list { flex-wrap: nowrap; overflow-x: auto; max-height: none; scrollbar-width: none; }
+  .stack-chip { flex: none; }
   .dz-inner p { font-size: 14px; }
 }
 @media (max-width: 760px) and (orientation: landscape) {

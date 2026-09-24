@@ -133,13 +133,15 @@ export class Engine {
   }
 
   /**
-   * Render `src` ({tex,w,h}) with `params` into the canvas at W x H.
+   * Render `src` ({tex,w,h}) with `params` at W x H.
+   * opts.target: an FBO (from getFBO) to draw into instead of the canvas.
+   * opts.orig:   texture used as the "original" for split / hold-compare (defaults to src.tex).
    * opts.split (0..1) shows original left of the split; opts.showOrig shows original entirely.
    */
   render(src, params, W, H, opts = {}) {
     const gl = this.gl;
     W = Math.max(1, Math.round(W)); H = Math.max(1, Math.round(H));
-    if (this.canvas.width !== W || this.canvas.height !== H) {
+    if (!opts.target && (this.canvas.width !== W || this.canvas.height !== H)) {
       this.canvas.width = W; this.canvas.height = H;
     }
     gl.disable(gl.BLEND);
@@ -193,11 +195,11 @@ export class Engine {
       blurTex = b2.tex;
     }
 
-    // --- pass 3: final composite to canvas
+    // --- pass 3: final composite
     gl.useProgram(this.pFinal.prog);
     this.bindTex(0, G.tex);
     this.bindTex(1, blurTex);
-    this.bindTex(2, src.tex);
+    this.bindTex(2, opts.orig || src.tex);
     gl.uniform1i(this.uniform(this.pFinal, 'u_graded'), 0);
     gl.uniform1i(this.uniform(this.pFinal, 'u_blur'), 1);
     gl.uniform1i(this.uniform(this.pFinal, 'u_orig'), 2);
@@ -210,7 +212,27 @@ export class Engine {
       vignette: params.vignette, vignetteFeather: params.vignetteFeather,
       split: opts.split ?? 0, seed: this.seed, showOrig: opts.showOrig ? 1 : 0,
     });
-    this.draw(this.pFinal, null, W, H);
+    this.draw(this.pFinal, opts.target || null, W, H);
     gl.bindVertexArray(null);
+  }
+
+  /**
+   * Apply a list of parameter sets in sequence (layer stacking). Each stage's
+   * output feeds the next; the last stage draws to the canvas.
+   */
+  renderStack(src, paramsList, W, H, opts = {}) {
+    if (paramsList.length === 0) paramsList = [null];
+    let cur = src;
+    for (let i = 0; i < paramsList.length; i++) {
+      const last = i === paramsList.length - 1;
+      const p = paramsList[i];
+      if (last) {
+        this.render(cur, p, W, H, { ...opts, orig: src.tex, target: null });
+      } else {
+        const t = this.getFBO('stack' + (i % 2), Math.round(W), Math.round(H));
+        this.render(cur, p, W, H, { target: t, orig: src.tex, split: 0, showOrig: false });
+        cur = { tex: t.tex, w: t.w, h: t.h };
+      }
+    }
   }
 }

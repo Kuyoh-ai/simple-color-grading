@@ -3,8 +3,10 @@ import { NEUTRAL, CONTROL_DEFS, ADJUST_KEYS, CATEGORIES, PRESETS, PRESET_MAP, ef
 
 const $ = (s) => document.querySelector(s);
 const els = {
-  canvas: $('#glcanvas'), viewer: $('#viewer'), dropzone: $('#dropzone'), dragOverlay: $('#dragOverlay'),
-  info: $('#viewerInfo'), splitHandle: $('#splitHandle'),
+  canvas: $('#glcanvas'), origCanvas: $('#origcanvas'), stage: $('#stage'), origPane: $('#origPane'), gradedPane: $('#gradedPane'),
+  viewer: $('#viewer'), dropzone: $('#dropzone'), dragOverlay: $('#dragOverlay'),
+  info: $('#viewerInfo'), splitHandle: $('#splitHandle'), btnSide: $('#btnSide'),
+  stackBar: $('#stackBar'), stackList: $('#stackList'), btnClearStack: $('#btnClearStack'),
   fileInput: $('#fileInput'), btnOpen: $('#btnOpen'), btnOpen2: $('#btnOpen2'), btnSample: $('#btnSample'),
   btnCompare: $('#btnCompare'), btnSplit: $('#btnSplit'), btnExport: $('#btnExport'), btnTheme: $('#btnTheme'),
   categories: $('#categories'), grid: $('#presetGrid'), presetName: $('#presetName'), presetDesc: $('#presetDesc'),
@@ -24,15 +26,25 @@ const state = {
   image: null,          // { bitmap, name, w, h }
   previewTex: null,     // { tex, w, h }
   thumbTex: null,
-  presetId: 'none',
+  presetId: 'none',     // preset whose sliders are shown
+  stack: [],            // applied presets, in order (empty = original)
+  favorites: loadFavorites(),
   overrides: {},        // per-preset slider values keyed by preset id
   intensity: {},        // per-preset intensity
   adjust: Object.fromEntries(ADJUST_KEYS.map(k => [k, 0])),
   category: 'all',
-  split: null,          // null | 0..1
+  compare: 'none',      // 'none' | 'split' | 'side'
+  split: 0.5,           // split position 0..1
   showOrig: false,
   thumbJob: 0,
 };
+
+function loadFavorites() {
+  try { const a = JSON.parse(localStorage.getItem('scg-favorites') || '[]'); return new Set(Array.isArray(a) ? a : []); } catch { return new Set(); }
+}
+function saveFavorites() {
+  try { localStorage.setItem('scg-favorites', JSON.stringify([...state.favorites])); } catch {}
+}
 
 let engine, thumbEngine;
 try {
@@ -68,9 +80,13 @@ const nextFrame = () => new Promise(r => requestAnimationFrame(() => setTimeout(
 const fmt = (v, step) => (step >= 1 ? Math.round(v) : v.toFixed(step < 0.01 ? 3 : 2)).toString();
 
 function currentPreset() { return PRESET_MAP[state.presetId] || PRESET_MAP.none; }
-function currentParams() {
-  const p = currentPreset();
-  return effectiveParams(p, state.overrides[p.id] || {}, state.intensity[p.id] ?? 1, state.adjust);
+/** Parameter sets for every stacked preset, in application order. Global adjustments ride on the last stage. */
+function currentParamsList() {
+  const ids = state.stack.length ? state.stack : ['none'];
+  return ids.map((id, i) => {
+    const p = PRESET_MAP[id];
+    return effectiveParams(p, state.overrides[id] || {}, state.intensity[id] ?? 1, i === ids.length - 1 ? state.adjust : null);
+  });
 }
 
 /* ---------------- rendering ---------------- */
@@ -80,25 +96,48 @@ function requestRender() {
   rafId = requestAnimationFrame(() => { rafId = 0; renderPreview(); });
 }
 
+const SIDE_GAP = 8;
 function fitSize() {
   const img = state.image;
   const rect = els.viewer.getBoundingClientRect();
-  const vw = Math.max(1, rect.width), vh = Math.max(1, rect.height);
-  const scale = Math.min(vw / img.w, vh / img.h, 1e9);
+  let vw = Math.max(1, rect.width - 8), vh = Math.max(1, rect.height - 8);
+  let vertical = false;
+  if (state.compare === 'side') {
+    // choose the arrangement that gives the larger image
+    const sH = Math.min((vw - SIDE_GAP) / 2 / img.w, vh / img.h);
+    const sV = Math.min(vw / img.w, (vh - SIDE_GAP) / 2 / img.h);
+    vertical = sV > sH;
+    if (vertical) vh = (vh - SIDE_GAP) / 2; else vw = (vw - SIDE_GAP) / 2;
+  }
+  const scale = Math.min(vw / img.w, vh / img.h);
   const cw = Math.max(1, Math.floor(img.w * scale)), ch = Math.max(1, Math.floor(img.h * scale));
-  return { cw, ch };
+  return { cw, ch, vertical };
+}
+
+function drawOriginal(cw, ch) {
+  const dpr = Math.min(window.devicePixelRatio || 1, 3);
+  const W = Math.max(1, Math.min(Math.round(cw * dpr), state.image.w)), H = Math.max(1, Math.min(Math.round(ch * dpr), state.image.h));
+  if (els.origCanvas.width !== W || els.origCanvas.height !== H) { els.origCanvas.width = W; els.origCanvas.height = H; }
+  els.origCanvas.style.width = cw + 'px'; els.origCanvas.style.height = ch + 'px';
+  const ctx = els.origCanvas.getContext('2d');
+  ctx.imageSmoothingQuality = 'high';
+  ctx.drawImage(state.image.bitmap, 0, 0, W, H);
 }
 
 function renderPreview() {
   if (!state.image || !state.previewTex) return;
-  const { cw, ch } = fitSize();
+  const { cw, ch, vertical } = fitSize();
+  els.stage.classList.toggle('side', state.compare === 'side');
+  els.stage.classList.toggle('vertical', state.compare === 'side' && vertical);
+  els.origPane.hidden = state.compare !== 'side';
   els.canvas.style.width = cw + 'px';
   els.canvas.style.height = ch + 'px';
+  if (state.compare === 'side') drawOriginal(cw, ch);
   const dpr = Math.min(window.devicePixelRatio || 1, 3);
   const W = Math.min(Math.round(cw * dpr), state.previewTex.w, engine.maxTex);
   const H = Math.min(Math.round(ch * dpr), state.previewTex.h, engine.maxTex);
-  engine.render(state.previewTex, currentParams(), Math.max(W, 1), Math.max(H, 1), {
-    split: state.split ?? 0, showOrig: state.showOrig,
+  engine.renderStack(state.previewTex, currentParamsList(), Math.max(W, 1), Math.max(H, 1), {
+    split: state.compare === 'split' ? state.split : 0, showOrig: state.showOrig,
   });
   positionSplitHandle();
 }
@@ -153,7 +192,7 @@ async function loadImage(blob, name = 'image') {
     els.dropzone.hidden = true;
     els.info.hidden = false;
     els.info.textContent = `${w} × ${h}`;
-    for (const b of [els.btnCompare, els.btnSplit, els.btnExport, els.btnDownload]) b.disabled = false;
+    for (const b of [els.btnCompare, els.btnSplit, els.btnSide, els.btnExport, els.btnDownload]) b.disabled = false;
     updateExportInfo();
     requestRender();
     buildThumbnails();
@@ -227,7 +266,7 @@ els.btnSample.addEventListener('click', async () => { const b = await makeSample
 /* ---------------- presets UI ---------------- */
 function buildCategories() {
   els.categories.innerHTML = '';
-  for (const c of CATEGORIES) {
+  for (const c of [CATEGORIES[0], { id: 'fav', label: '★ お気に入り' }, ...CATEGORIES.slice(1)]) {
     const b = document.createElement('button');
     b.className = 'chip' + (c.id === state.category ? ' active' : '');
     b.textContent = c.label; b.dataset.cat = c.id;
@@ -236,37 +275,147 @@ function buildCategories() {
   }
 }
 const cards = new Map();
+const LONG_PRESS_MS = 450;
 function buildGrid() {
   els.grid.innerHTML = ''; cards.clear();
   for (const p of PRESETS) {
     const card = document.createElement('div');
-    card.className = 'preset-card' + (p.id === state.presetId ? ' active' : '');
-    card.dataset.id = p.id; card.dataset.cat = p.cat; card.tabIndex = 0; card.title = p.desc;
-    const ph = document.createElement('div'); ph.className = 'ph';
+    card.className = 'preset-card';
+    card.dataset.id = p.id; card.dataset.cat = p.cat; card.tabIndex = 0;
+    card.title = p.desc + (p.id === 'none' ? '' : '\n(Shift+クリック / 長押しで重ねがけ)');
     const cv = document.createElement('canvas'); cv.width = 4; cv.height = 3; cv.hidden = true;
+    const ph = document.createElement('div'); ph.className = 'ph';
     const nm = document.createElement('div'); nm.className = 'name'; nm.textContent = p.name;
-    card.append(cv, ph, nm);
-    card.addEventListener('click', () => selectPreset(p.id));
-    card.addEventListener('keydown', (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); selectPreset(p.id); } });
+    const badge = document.createElement('div'); badge.className = 'badge'; badge.hidden = true;
+    card.append(cv, ph, nm, badge);
+    if (p.id !== 'none') {
+      const star = document.createElement('button');
+      star.className = 'star'; star.type = 'button'; star.title = 'お気に入り';
+      star.setAttribute('aria-label', 'お気に入りに追加/解除');
+      star.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.6 6.1.7-4.5 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.3 9.8l6.1-.7z"/></svg>';
+      star.addEventListener('pointerdown', (e) => e.stopPropagation());
+      star.addEventListener('click', (e) => { e.stopPropagation(); toggleFavorite(p.id); });
+      card.append(star);
+    }
+    attachCardInteraction(card, p.id);
     els.grid.appendChild(card);
-    cards.set(p.id, { card, cv });
+    cards.set(p.id, { card, cv, badge });
   }
-  filterGrid();
+  refreshCards();
 }
-function filterGrid() {
-  for (const [id, { card }] of cards) {
+
+/* click = select (replace stack); shift/ctrl+click or long-press = toggle in stack */
+function attachCardInteraction(card, id) {
+  let timer = 0, sx = 0, sy = 0, longFired = false;
+  const cancel = () => { if (timer) { clearTimeout(timer); timer = 0; } };
+  card.addEventListener('pointerdown', (e) => {
+    if (e.button !== 0) return;
+    longFired = false; sx = e.clientX; sy = e.clientY;
+    cancel();
+    timer = setTimeout(() => { timer = 0; longFired = true; togglePresetInStack(id); if (navigator.vibrate) navigator.vibrate(15); }, LONG_PRESS_MS);
+  });
+  card.addEventListener('pointermove', (e) => { if (timer && Math.hypot(e.clientX - sx, e.clientY - sy) > 8) cancel(); });
+  card.addEventListener('pointerup', cancel);
+  card.addEventListener('pointercancel', cancel);
+  card.addEventListener('pointerleave', cancel);
+  card.addEventListener('click', (e) => {
+    if (longFired) { longFired = false; e.preventDefault(); return; }
+    if (e.shiftKey || e.ctrlKey || e.metaKey) togglePresetInStack(id); else selectPreset(id);
+  });
+  card.addEventListener('contextmenu', (e) => e.preventDefault());
+  card.addEventListener('keydown', (e) => {
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); if (e.shiftKey) togglePresetInStack(id); else selectPreset(id); }
+    else if (e.key.toLowerCase() === 'f' && id !== 'none') toggleFavorite(id);
+  });
+}
+
+/* ordering: favorites first, then catalogue order; visibility by category */
+function refreshCards() {
+  const order = PRESETS.map(p => p.id).sort((a, b) => {
+    if (a === 'none') return -1; if (b === 'none') return 1;
+    return (state.favorites.has(b) ? 1 : 0) - (state.favorites.has(a) ? 1 : 0);
+  });
+  order.forEach((id, i) => {
+    const { card, badge } = cards.get(id);
     const p = PRESET_MAP[id];
-    card.hidden = !(state.category === 'all' || p.cat === state.category || p.id === 'none');
-  }
+    card.style.order = i;
+    const fav = state.favorites.has(id);
+    card.classList.toggle('fav', fav);
+    card.hidden = !(id === 'none' || state.category === 'all' || (state.category === 'fav' ? fav : p.cat === state.category));
+    const idx = state.stack.indexOf(id);
+    const inStack = idx >= 0 || (id === 'none' && state.stack.length === 0);
+    card.classList.toggle('active', id === state.presetId || (id === 'none' && state.stack.length === 0));
+    card.classList.toggle('stacked', idx >= 0);
+    badge.hidden = !(idx >= 0 && state.stack.length > 1);
+    badge.textContent = idx + 1;
+    void inStack;
+  });
+  renderStackBar();
 }
-function selectPreset(id) {
-  state.presetId = id;
-  for (const [pid, { card }] of cards) card.classList.toggle('active', pid === id);
-  const c = cards.get(id);
-  if (c) c.card.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
+function filterGrid() { refreshCards(); }
+
+function toggleFavorite(id) {
+  if (state.favorites.has(id)) state.favorites.delete(id); else state.favorites.add(id);
+  saveFavorites();
+  refreshCards();
+  toast(state.favorites.has(id) ? `★ ${PRESET_MAP[id].name} をお気に入りに追加` : `${PRESET_MAP[id].name} をお気に入りから解除`, 1500);
+}
+
+function afterStackChange() {
+  refreshCards();
   buildPresetControls();
   requestRender();
+  const c = cards.get(state.presetId);
+  if (c) c.card.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'smooth' });
 }
+function selectPreset(id) {
+  state.stack = id === 'none' ? [] : [id];
+  state.presetId = id;
+  afterStackChange();
+}
+function togglePresetInStack(id) {
+  if (id === 'none') { state.stack = []; state.presetId = 'none'; afterStackChange(); return; }
+  const i = state.stack.indexOf(id);
+  if (i >= 0) {
+    state.stack.splice(i, 1);
+    state.presetId = state.stack.length ? state.stack[state.stack.length - 1] : 'none';
+  } else {
+    state.stack.push(id);
+    state.presetId = id;
+  }
+  afterStackChange();
+}
+function removeFromStack(id) { if (state.stack.includes(id)) togglePresetInStack(id); }
+function moveInStack(id, dir) {
+  const i = state.stack.indexOf(id), j = i + dir;
+  if (i < 0 || j < 0 || j >= state.stack.length) return;
+  [state.stack[i], state.stack[j]] = [state.stack[j], state.stack[i]];
+  afterStackChange();
+}
+
+function renderStackBar() {
+  const multi = state.stack.length > 1;
+  els.stackBar.hidden = !multi;
+  if (!multi) return;
+  els.stackList.innerHTML = '';
+  state.stack.forEach((id, i) => {
+    const chip = document.createElement('div');
+    chip.className = 'stack-chip' + (id === state.presetId ? ' active' : '');
+    chip.title = 'クリックでこのエフェクトのスライダーを表示';
+    const n = document.createElement('span'); n.className = 'n'; n.textContent = i + 1;
+    const t = document.createElement('span'); t.className = 't'; t.textContent = PRESET_MAP[id].name;
+    const up = document.createElement('button'); up.textContent = '‹'; up.title = '前へ'; up.disabled = i === 0;
+    up.addEventListener('click', (e) => { e.stopPropagation(); moveInStack(id, -1); });
+    const dn = document.createElement('button'); dn.textContent = '›'; dn.title = '後へ'; dn.disabled = i === state.stack.length - 1;
+    dn.addEventListener('click', (e) => { e.stopPropagation(); moveInStack(id, 1); });
+    const x = document.createElement('button'); x.textContent = '×'; x.title = '外す';
+    x.addEventListener('click', (e) => { e.stopPropagation(); removeFromStack(id); });
+    chip.append(n, t, up, dn, x);
+    chip.addEventListener('click', () => { state.presetId = id; refreshCards(); buildPresetControls(); });
+    els.stackList.appendChild(chip);
+  });
+}
+els.btnClearStack.addEventListener('click', () => selectPreset('none'));
 
 function sliderRow(key, def, value, onInput, { master = false, label } = {}) {
   const row = document.createElement('div');
@@ -287,9 +436,10 @@ function buildPresetControls() {
   els.presetName.textContent = p.name;
   els.presetDesc.textContent = p.desc;
   els.presetControls.innerHTML = '';
+  if (state.stack.length > 1) els.presetName.textContent = `${state.stack.indexOf(p.id) + 1}. ${p.name}`;
   if (p.id === 'none') {
     const n = document.createElement('div'); n.className = 'empty-note';
-    n.textContent = 'プリセットを選ぶと、ここに強度スライダーが表示されます。';
+    n.textContent = 'プリセットを選ぶと、ここに強度スライダーが表示されます。Shift+クリック / 長押しで複数のエフェクトを重ねがけできます。';
     els.presetControls.appendChild(n);
     return;
   }
@@ -369,17 +519,20 @@ window.addEventListener('keydown', (e) => {
 });
 window.addEventListener('keyup', (e) => { if (e.code === 'Space') holdEnd(); });
 
-els.btnSplit.addEventListener('click', () => {
-  state.split = state.split === null ? 0.5 : null;
-  els.btnSplit.setAttribute('aria-pressed', state.split !== null);
-  els.splitHandle.hidden = state.split === null;
+function setCompare(mode) {
+  state.compare = state.compare === mode ? 'none' : mode;
+  els.btnSplit.setAttribute('aria-pressed', state.compare === 'split');
+  els.btnSide.setAttribute('aria-pressed', state.compare === 'side');
+  els.splitHandle.hidden = state.compare !== 'split';
   requestRender();
-});
+}
+els.btnSplit.addEventListener('click', () => setCompare('split'));
+els.btnSide.addEventListener('click', () => setCompare('side'));
 function positionSplitHandle() {
-  if (state.split === null) return;
-  const cr = els.canvas.getBoundingClientRect(), vr = els.viewer.getBoundingClientRect();
-  els.splitHandle.style.left = (cr.left - vr.left + cr.width * state.split) + 'px';
-  els.splitHandle.style.top = (cr.top - vr.top) + 'px';
+  if (state.compare !== 'split') return;
+  const cr = els.canvas.getBoundingClientRect();
+  els.splitHandle.style.left = (cr.width * state.split) + 'px';
+  els.splitHandle.style.top = '0px';
   els.splitHandle.style.height = cr.height + 'px';
 }
 let splitDrag = false;
@@ -393,7 +546,7 @@ els.splitHandle.addEventListener('pointermove', (e) => { if (splitDrag) splitMov
 els.splitHandle.addEventListener('pointerup', () => { splitDrag = false; });
 els.splitHandle.addEventListener('pointercancel', () => { splitDrag = false; });
 els.viewer.addEventListener('pointerdown', (e) => {
-  if (state.split === null || e.target === els.splitHandle || els.splitHandle.contains(e.target)) return;
+  if (state.compare !== 'split' || e.target === els.splitHandle || els.splitHandle.contains(e.target)) return;
   if (e.target !== els.canvas) return;
   splitMove(e);
 });
@@ -440,8 +593,8 @@ async function doExport() {
     const maxSrc = Math.min(engine.maxTex, Math.max(w, h));
     const src = Math.max(state.image.w, state.image.h) > maxSrc ? scaledCanvas(bmp, maxSrc) : bmp;
     fullTex = engine.createTexture(src, { mipmap: false });
-    const params = currentParams();
-    engine.render(fullTex, params, w, h, { split: 0, showOrig: false });
+    const params = currentParamsList();
+    engine.renderStack(fullTex, params, w, h, { split: 0, showOrig: false });
     const err = engine.gl.getError();
     if (err !== engine.gl.NO_ERROR) throw new Error('WebGL error ' + err);
     let blob = await canvasToBlob(els.canvas, type, quality);
@@ -449,7 +602,7 @@ async function doExport() {
     if (!blob || (blob.type && blob.type !== type)) {
       // browser could not encode requested format (e.g. WebP on old Safari) → fall back to PNG
       outType = 'image/png';
-      engine.render(fullTex, params, w, h, { split: 0, showOrig: false });
+      engine.renderStack(fullTex, params, w, h, { split: 0, showOrig: false });
       blob = await canvasToBlob(els.canvas, outType);
       if (type !== outType) toast('この形式で保存できないため PNG で書き出しました');
     }
@@ -457,7 +610,7 @@ async function doExport() {
     const ext = outType === 'image/jpeg' ? 'jpg' : outType === 'image/webp' ? 'webp' : 'png';
     const a = document.createElement('a');
     a.href = URL.createObjectURL(blob);
-    a.download = `${state.image.name}_${state.presetId}.${ext}`;
+    a.download = `${state.image.name}_${state.stack.length ? state.stack.join('+') : 'original'}.${ext}`;
     document.body.appendChild(a); a.click(); a.remove();
     setTimeout(() => URL.revokeObjectURL(a.href), 10000);
     toast(`書き出しました (${w} × ${h}, ${(blob.size / 1024 / 1024).toFixed(2)} MB)`);
