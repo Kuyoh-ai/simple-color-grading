@@ -161,52 +161,30 @@ export class Engine {
       highlights: params.highlights, shadows: params.shadows, fade: params.fade,
       hueShift: params.hueShift, bleach: params.bleach, mono: params.mono, filmic: params.filmic,
       splitAmt: params.splitAmt, splitBalance: params.splitBalance, gmAmt: params.gmAmt,
+      gmMode: params.gmMode, protect: params.protect,
       lift: params.lift, gamma: params.gamma, gain: params.gain,
       shadowTint: params.shadowTint, highTint: params.highTint, monoMix: params.monoMix,
       gmDark: params.gmDark, gmMid: params.gmMid, gmLight: params.gmLight,
     });
     this.draw(this.pGrade, G, W, H);
 
-    // --- pass 2: blur chain (only when needed)
+    // --- pass 2: blur chains (only when needed)
     const needBlur = params.glow > 0 || params.clarity !== 0 || params.halation > 0 || params.focusBlur > 0;
-    let blurTex = G.tex;
-    if (needBlur) {
-      let sigma = params.blurRadius * Math.min(W, H);
-      let w = W, h = H, cur = G, lvl = 0;
-      while (sigma > 6 && Math.min(w, h) > 64) {
-        w = Math.ceil(w / 2); h = Math.ceil(h / 2); sigma /= 2;
-        const nf = this.getFBO('d' + lvl, w, h);
-        gl.useProgram(this.pCopy.prog);
-        this.bindTex(0, cur.tex);
-        gl.uniform1i(this.uniform(this.pCopy, 'u_src'), 0);
-        this.draw(this.pCopy, nf, w, h);
-        cur = nf; lvl++;
-      }
-      sigma = Math.max(sigma, 0.4);
-      const taps = Math.min(Math.ceil(sigma * 3), 20);
-      const b1 = this.getFBO('b1', w, h);
-      const b2 = this.getFBO('b2', w, h);
-      gl.useProgram(this.pBlur.prog);
-      gl.uniform1i(this.uniform(this.pBlur, 'u_src'), 0);
-      gl.uniform1f(this.uniform(this.pBlur, 'u_sigma'), sigma);
-      gl.uniform1i(this.uniform(this.pBlur, 'u_taps'), taps);
-      this.bindTex(0, cur.tex);
-      gl.uniform2f(this.uniform(this.pBlur, 'u_dir'), 1 / w, 0);
-      this.draw(this.pBlur, b1, w, h);
-      this.bindTex(0, b1.tex);
-      gl.uniform2f(this.uniform(this.pBlur, 'u_dir'), 0, 1 / h);
-      this.draw(this.pBlur, b2, w, h);
-      blurTex = b2.tex;
-    }
+    const blurTex = needBlur ? this.blur(G, params.blurRadius * Math.min(W, H), '') : G.tex;
+    // wide blur used as the "surroundings" reference for local shading
+    const needWide = params.shade > 0 || params.localLight > 0;
+    const wideTex = needWide ? this.blur(G, params.shadeRadius * Math.min(W, H), 'w') : G.tex;
 
     // --- pass 3: final composite
     gl.useProgram(this.pFinal.prog);
     this.bindTex(0, G.tex);
     this.bindTex(1, blurTex);
     this.bindTex(2, opts.orig || src.tex);
+    this.bindTex(3, wideTex);
     gl.uniform1i(this.uniform(this.pFinal, 'u_graded'), 0);
     gl.uniform1i(this.uniform(this.pFinal, 'u_blur'), 1);
     gl.uniform1i(this.uniform(this.pFinal, 'u_orig'), 2);
+    gl.uniform1i(this.uniform(this.pFinal, 'u_wide'), 3);
     this.setUniforms(this.pFinal, {
       res: [W, H],
       glow: params.glow, glowThreshold: params.glowThreshold, glowMode: params.glowMode,
@@ -218,10 +196,45 @@ export class Engine {
       outline: params.outline, outlineWidth: params.outlineWidth, outlineColor: params.outlineColor,
       halftone: params.halftone, halftoneSize: params.halftoneSize,
       focusBlur: params.focusBlur, focusRadius: params.focusRadius,
+      shade: params.shade, shadeSat: params.shadeSat, shadeColor: params.shadeColor,
+      localLight: params.localLight, lightColor: params.lightColor, lineKeep: params.lineKeep,
+      posterDetail: params.posterDetail, outlineMode: params.outlineMode,
+      lightAngle: params.lightAngle, lightSpread: params.lightSpread,
+      beam: params.beam, beamColor: params.beamColor, para: params.para, paraColor: params.paraColor,
       split: opts.split ?? 0, seed: this.seed, showOrig: opts.showOrig ? 1 : 0,
     });
     this.draw(this.pFinal, opts.target || null, W, H);
     gl.bindVertexArray(null);
+  }
+
+  /** Downsample + separable gaussian blur of `src` (an FBO) with sigma in pixels; returns the texture. */
+  blur(src, sigma, key) {
+    const gl = this.gl;
+    let w = src.w, h = src.h, cur = src, lvl = 0;
+    while (sigma > 6 && Math.min(w, h) > 64) {
+      w = Math.ceil(w / 2); h = Math.ceil(h / 2); sigma /= 2;
+      const nf = this.getFBO(key + 'd' + lvl, w, h);
+      gl.useProgram(this.pCopy.prog);
+      this.bindTex(0, cur.tex);
+      gl.uniform1i(this.uniform(this.pCopy, 'u_src'), 0);
+      this.draw(this.pCopy, nf, w, h);
+      cur = nf; lvl++;
+    }
+    sigma = Math.max(sigma, 0.4);
+    const taps = Math.min(Math.ceil(sigma * 3), 20);
+    const b1 = this.getFBO(key + 'b1', w, h);
+    const b2 = this.getFBO(key + 'b2', w, h);
+    gl.useProgram(this.pBlur.prog);
+    gl.uniform1i(this.uniform(this.pBlur, 'u_src'), 0);
+    gl.uniform1f(this.uniform(this.pBlur, 'u_sigma'), sigma);
+    gl.uniform1i(this.uniform(this.pBlur, 'u_taps'), taps);
+    this.bindTex(0, cur.tex);
+    gl.uniform2f(this.uniform(this.pBlur, 'u_dir'), 1 / w, 0);
+    this.draw(this.pBlur, b1, w, h);
+    this.bindTex(0, b1.tex);
+    gl.uniform2f(this.uniform(this.pBlur, 'u_dir'), 0, 1 / h);
+    this.draw(this.pBlur, b2, w, h);
+    return b2.tex;
   }
 
   /**

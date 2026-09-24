@@ -19,6 +19,10 @@ const vec3 LW = vec3(0.2126, 0.7152, 0.0722);
 vec3 overlay(vec3 b, vec3 s){
   return mix(2.0*b*s, 1.0 - 2.0*(1.0-b)*(1.0-s), step(0.5, b));
 }
+vec3 softLight(vec3 b, vec3 s){
+  vec3 d = mix(sqrt(b), ((16.0*b - 12.0)*b + 4.0)*b, step(b, vec3(0.25)));
+  return mix(b - (1.0 - 2.0*s)*b*(1.0 - b), b + (2.0*s - 1.0)*(d - b), step(0.5, s));
+}
 `;
 
 // Pass 1: per-pixel color grading
@@ -28,7 +32,7 @@ in vec2 v_uv; out vec4 o;
 uniform sampler2D u_src;
 uniform float u_exposure, u_contrast, u_saturation, u_vibrance, u_temperature, u_tint;
 uniform float u_highlights, u_shadows, u_fade, u_hueShift, u_bleach, u_mono, u_filmic;
-uniform float u_splitAmt, u_splitBalance, u_gmAmt;
+uniform float u_splitAmt, u_splitBalance, u_gmAmt, u_gmMode, u_protect;
 uniform vec3 u_lift, u_gamma, u_gain, u_shadowTint, u_highTint, u_monoMix, u_gmDark, u_gmMid, u_gmLight;
 ${COMMON}
 vec3 s2l(vec3 c){ return mix(c/12.92, pow((c+0.055)/1.055, vec3(2.4)), step(0.04045, c)); }
@@ -42,8 +46,15 @@ vec3 tonal(vec3 c, float v, float m, float k){
   // v>0: push toward white weighted by mask, v<0: scale down
   return mix(c*(1.0 + v*k*m), c + v*k*m*(1.0 - c), step(0.0, v));
 }
+float hue01(vec3 c){
+  float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b)), d = mx - mn;
+  if (d < 1e-4) return 0.0;
+  float h = mx == c.r ? mod((c.g - c.b)/d, 6.0) : mx == c.g ? (c.b - c.r)/d + 2.0 : (c.r - c.g)/d + 4.0;
+  return h / 6.0;
+}
 void main(){
-  vec3 c = texture(u_src, v_uv).rgb;
+  vec3 src = texture(u_src, v_uv).rgb;
+  vec3 c = src;
   // exposure / white balance in linear light
   vec3 lin = s2l(c) * exp2(u_exposure);
   lin *= vec3(1.0 + 0.22*u_temperature + 0.05*u_tint, 1.0 - 0.16*u_tint, 1.0 - 0.22*u_temperature + 0.05*u_tint);
@@ -99,7 +110,28 @@ void main(){
   if (u_gmAmt > 0.0) {
     float l = dot(clamp(c, 0.0, 1.0), LW);
     vec3 g = l < 0.5 ? mix(u_gmDark, u_gmMid, l*2.0) : mix(u_gmMid, u_gmLight, (l - 0.5)*2.0);
-    c = mix(c, g, u_gmAmt);
+    int gm = int(u_gmMode + 0.5);
+    vec3 r;
+    if (gm == 1) r = softLight(clamp(c, 0.0, 1.0), g);          // ソフトライト
+    else if (gm == 2) r = g + (l - dot(g, LW));                 // カラー (keeps luminance)
+    else r = g;                                                  // 通常
+    c = mix(c, r, u_gmAmt);
+  }
+  // protect paper white and skin tones from colour casts: keep the source chroma
+  // at the graded luminance (tone changes still apply, tints do not)
+  if (u_protect > 0.0) {
+    float smx = max(src.r, max(src.g, src.b)), smn = min(src.r, min(src.g, src.b));
+    float ssat = (smx - smn) / max(smx, 1e-4);
+    float white = smoothstep(0.80, 0.95, smn) * (1.0 - smoothstep(0.06, 0.16, ssat));
+    float h = fract(hue01(src) + 0.1);                           // skin hue ~ -15..45 deg -> 0.06..0.23
+    float skin = smoothstep(0.03, 0.08, h) * (1.0 - smoothstep(0.20, 0.25, h))
+               * smoothstep(0.05, 0.12, ssat) * (1.0 - smoothstep(0.42, 0.6, ssat))
+               * smoothstep(0.45, 0.7, smx) * (1.0 - u_mono);
+    float m = max(white * sqrt(u_protect), skin * 0.8 * u_protect);   // paper white is protected more eagerly than skin
+    vec3 cc = clamp(c, 0.0, 1.0);
+    float L = dot(cc, LW), Ls = dot(src, LW);
+    vec3 keep = clamp(vec3(L) + (src - vec3(Ls)), 0.0, 1.0);
+    c = mix(cc, keep, m);
   }
   o = vec4(clamp(c, 0.0, 1.0), 1.0);
 }`;
@@ -134,13 +166,15 @@ void main(){
 export const FS_FINAL = `#version 300 es
 precision highp float;
 in vec2 v_uv; out vec4 o;
-uniform sampler2D u_graded, u_blur, u_orig;
+uniform sampler2D u_graded, u_blur, u_wide, u_orig;
 uniform vec2 u_res;
 uniform float u_glow, u_glowThreshold, u_glowMode, u_halation, u_clarity, u_sharpen, u_chromAb;
 uniform float u_grain, u_grainSize, u_grainType, u_vignette, u_vignetteFeather;
 uniform float u_posterize, u_posterSoft, u_outline, u_outlineWidth, u_halftone, u_halftoneSize, u_focusBlur, u_focusRadius;
 uniform float u_split, u_seed, u_showOrig;
-uniform vec3 u_glowTint, u_outlineColor;
+uniform float u_shade, u_shadeSat, u_localLight, u_lineKeep, u_posterDetail, u_outlineMode;
+uniform float u_lightAngle, u_lightSpread, u_beam, u_para;
+uniform vec3 u_glowTint, u_outlineColor, u_shadeColor, u_lightColor, u_beamColor, u_paraColor;
 ${COMMON}
 float hash(vec2 p){
   p = fract(p * vec2(123.34, 456.21));
@@ -167,6 +201,29 @@ void main(){
     c = texture(u_graded, v_uv).rgb;
   }
   vec3 bl = texture(u_blur, v_uv).rgb;
+  float lc = dot(c, LW);
+  // ink-line mask: pixels much darker than their neighbourhood (existing line art)
+  vec3 ring = c;
+  float lineM = 0.0;
+  if (u_lineKeep > 0.0 || u_shade > 0.0 || u_localLight > 0.0 || u_posterize > 0.5) {
+    vec2 rs = px * max(s, 1.0) * 2.0;
+    ring = (texture(u_graded, v_uv + vec2(rs.x, 0.0)).rgb + texture(u_graded, v_uv - vec2(rs.x, 0.0)).rgb
+          + texture(u_graded, v_uv + vec2(0.0, rs.y)).rgb + texture(u_graded, v_uv - vec2(0.0, rs.y)).rgb
+          + texture(u_graded, v_uv + rs).rgb + texture(u_graded, v_uv - rs).rgb
+          + texture(u_graded, v_uv + vec2(rs.x, -rs.y)).rgb + texture(u_graded, v_uv + vec2(-rs.x, rs.y)).rgb) * 0.125;
+    lineM = smoothstep(0.06, 0.2, dot(ring, LW) - lc);
+  }
+  // local shading: compare with a wide blur so dark *objects* (black hair, navy uniform)
+  // are not mistaken for shadows; only regions darker/brighter than their surroundings react
+  if (u_shade > 0.0 || u_localLight > 0.0) {
+    float lw = dot(texture(u_wide, v_uv).rgb, LW);
+    float ratio = (lc + 0.03) / (lw + 0.03);
+    float shadeM = (1.0 - smoothstep(0.62, 0.97, ratio)) * smoothstep(0.25, 0.45, ratio) * (1.0 - lineM);
+    float lightM = smoothstep(1.03, 1.3, ratio);
+    vec3 sc = mix(vec3(lc), c, 1.0 + u_shadeSat * shadeM);
+    c = mix(c, clamp(sc, 0.0, 1.0) * u_shadeColor, shadeM * u_shade);           // 影色 (乗算)
+    c = mix(c, softLight(clamp(c, 0.0, 1.0), u_lightColor), lightM * u_localLight); // 光色 (ソフトライト)
+  }
   // selective (radial) blur: keeps the centre sharp, blurs toward the edges
   if (u_focusBlur > 0.0) {
     float r = length(d * 2.0) / 1.41421;
@@ -180,9 +237,11 @@ void main(){
     float x = l * n;
     float f = fract(x);
     float soft = max(u_posterSoft, 0.001);
-    float q = (floor(x) + smoothstep(0.5 - soft, 0.5 + soft, f)) / n;
+    // quantise to band centres (not band edges) so light skin is not pushed to flat white
+    float q = min((floor(x) + 0.5 + smoothstep(1.0 - 2.0*soft, 1.0, f)) / n, 1.0);
     q = mix(q, l, 0.15); // keep a hint of the original gradient so it does not look flat
-    c = clamp(c * (max(q, 0.0) + 0.02) / (l + 0.02), 0.0, 1.0);
+    vec3 detail = c - ring;
+    c = clamp(c * (max(q, 0.0) + 0.02) / (l + 0.02) + detail * u_posterDetail, 0.0, 1.0);
   }
   // cel-look: ink outlines from a Sobel edge detector on the graded image
   if (u_outline > 0.0) {
@@ -198,7 +257,13 @@ void main(){
     float gx = (tr + 2.0*r0 + br) - (tl + 2.0*l0 + bL);
     float gy = (tl + 2.0*t0 + tr) - (bL + 2.0*b0 + br);
     float e = length(vec2(gx, gy));
-    float line = smoothstep(0.12, 0.45, e) * u_outline;
+    float line;
+    if (u_outlineMode > 0.5) {
+      // dark-line (DoG) mode: reinforce existing ink lines only, no double contours
+      vec3 avg = (texture(u_graded, v_uv + vec2(-st.x, st.y)).rgb + texture(u_graded, v_uv + vec2(st.x, st.y)).rgb
+                + texture(u_graded, v_uv + vec2(-st.x, -st.y)).rgb + texture(u_graded, v_uv + vec2(st.x, -st.y)).rgb) * 0.25;
+      line = smoothstep(0.04, 0.16, dot(avg, LW) - dot(texture(u_graded, v_uv).rgb, LW)) * u_outline;
+    } else line = smoothstep(0.12, 0.45, e) * u_outline;
     c = mix(c, u_outlineColor, clamp(line, 0.0, 1.0));
   }
   // comic halftone dots in the shadows
@@ -227,13 +292,25 @@ void main(){
     if (mode == 0) r = 1.0 - (1.0 - c) * (1.0 - g);   // screen
     else if (mode == 1) r = c + g;                    // add (加算発光)
     else if (mode == 2) r = overlay(c, g);            // overlay
+    else if (mode == 4) r = max(c, bl);               // lighten (比較(明): keeps lines crisp)
     else r = bl;                                      // normal (soft focus)
-    c = mix(c, clamp(r, 0.0, 1.0), u_glow);
+    c = mix(c, clamp(r, 0.0, 1.0), u_glow * (1.0 - lineM * u_lineKeep));
   }
   if (u_halation > 0.0) {
     vec3 h = clamp((bl - 0.55) / 0.45, 0.0, 1.0);
     float hl = dot(h, LW);
     c = 1.0 - (1.0 - c) * (1.0 - hl * vec3(1.0, 0.35, 0.12) * u_halation);
+  }
+  // anime compositing: 入射光 (light beam from one corner) and パラ (gradient shade from the other)
+  if (u_beam > 0.0 || u_para > 0.0) {
+    float a = radians(u_lightAngle);
+    vec2 ld = vec2(sin(a), -cos(a));                       // 0 deg = top, 90 = right (uv.y = 0 is the top)
+    float t = dot(d, ld) * 2.0 / (abs(ld.x) + abs(ld.y));   // -1..1 from the far corner to the light
+    float sp = clamp(u_lightSpread, 0.05, 1.0);
+    float bm = smoothstep(1.0 - 2.0*sp, 1.05, t);
+    float pm = smoothstep(1.0 - 2.0*sp, 1.05, -t);
+    c = mix(c, c * u_paraColor, pm * u_para);
+    c = 1.0 - (1.0 - c) * (1.0 - u_beamColor * bm * bm * u_beam);
   }
   if (u_grain > 0.0) {
     float n;
