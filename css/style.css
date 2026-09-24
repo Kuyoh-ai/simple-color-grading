@@ -11,6 +11,8 @@
   --accent-text: #fafafa;
   --shadow: 0 2px 10px rgba(0,0,0,.12);
   --radius: 10px;
+  --fav: #f5b700;
+  --fav-text: #8a6200;
   --topbar-h: 50px;
   --panel-w: 360px;
   color-scheme: light;
@@ -26,6 +28,7 @@
   --muted: #9a9a9a;
   --accent: #f0f0f0;
   --accent-text: #111;
+  --fav-text: #ffc933;
   --shadow: 0 2px 12px rgba(0,0,0,.5);
   color-scheme: dark;
 }
@@ -192,14 +195,34 @@ svg { display: block; }
   display: flex; align-items: center; justify-content: center; pointer-events: none;
 }
 .preset-card .star {
-  position: absolute; right: 2px; top: 2px; width: 26px; height: 26px; border: 0; border-radius: 50%;
-  background: transparent; color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center;
-  opacity: 0; transition: opacity .12s; filter: drop-shadow(0 1px 2px rgba(0,0,0,.8));
+  position: absolute; right: 3px; top: 3px; width: 24px; height: 24px; padding: 0; border: 0; border-radius: 50%;
+  background: rgba(0,0,0,.5); color: #fff; cursor: pointer; display: flex; align-items: center; justify-content: center;
+  opacity: 0; transition: opacity .12s, transform .12s;
 }
-.preset-card .star svg { width: 16px; height: 16px; fill: none; stroke: currentColor; stroke-width: 1.8; stroke-linejoin: round; }
-.preset-card:hover .star, .preset-card:focus-within .star, .preset-card.fav .star { opacity: 1; }
-.preset-card.fav .star svg { fill: #fff; }
-@media (hover: none) { .preset-card .star { opacity: .7; } }
+.preset-card .star svg { width: 15px; height: 15px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+.preset-card .star:hover { transform: scale(1.12); background: rgba(0,0,0,.7); }
+.preset-card:hover .star, .preset-card .star:focus-visible, .preset-card.fav .star { opacity: 1; }
+.preset-card.fav .star { color: var(--fav); }
+.preset-card.fav .star svg { fill: var(--fav); }
+/* touch: the star on a card is an indicator only (toggle with the お気に入り button under the grid),
+   so a tap near the corner always selects the preset instead of toggling the favourite by accident */
+@media (hover: none) {
+  .preset-card .star { pointer-events: none; }
+  .preset-card:not(.fav) .star { display: none; }
+}
+.grid-empty {
+  grid-column: 1 / -1; padding: 16px 8px; text-align: center; color: var(--muted); font-size: 12px; line-height: 1.7;
+}
+.grid-empty svg { width: 13px; height: 13px; vertical-align: -2px; margin: 0 1px; fill: var(--fav); stroke: var(--fav); stroke-width: 2; stroke-linejoin: round; }
+.chip-fav { display: inline-flex; align-items: center; gap: 4px; }
+.chip-fav svg { width: 13px; height: 13px; fill: var(--fav); stroke: var(--fav); stroke-width: 2; stroke-linejoin: round; }
+.chip-fav .count:empty { display: none; }
+.chip-fav .count { font-size: 10.5px; font-weight: 600; min-width: 16px; height: 16px; padding: 0 4px; border-radius: 8px; background: var(--surface-2); color: var(--text); display: inline-flex; align-items: center; justify-content: center; }
+.head-actions { display: flex; gap: 6px; flex: none; }
+.fav-btn { display: inline-flex; align-items: center; gap: 4px; }
+.fav-btn svg { width: 14px; height: 14px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+.fav-btn.on { color: var(--fav-text); border-color: var(--fav); }
+.fav-btn.on svg { fill: var(--fav); stroke: var(--fav); }
 .preset-card:focus-visible { border-color: var(--muted); }
 
 .controls {
@@ -261,6 +284,11 @@ select {
   position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%);
   background: var(--accent); color: var(--accent-text); padding: 8px 14px; border-radius: 8px;
   font-size: 13px; box-shadow: var(--shadow); z-index: 20; max-width: 90vw; text-align: center;
+  display: flex; align-items: center; gap: 12px; width: max-content; max-width: min(92vw, 520px); text-align: left;
+}
+.toast button {
+  flex: none; background: transparent; color: inherit; border: 1px solid currentColor; border-radius: 6px;
+  height: 26px; padding: 0 10px; font: inherit; font-size: 12px; font-weight: 600; cursor: pointer;
 }
 .busy {
   position: fixed; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
@@ -273,7 +301,7 @@ select {
 @media (max-width: 760px), ((orientation: portrait) and (max-width: 1100px)) {
   :root { --topbar-h: 46px; }
   .brand span { display: none; }
-  .btn span { display: none; }
+  .btn:not(.fav-btn) span { display: none; }
   .btn { padding: 0 10px; }
   .workspace { grid-template-columns: minmax(0, 1fr); grid-template-rows: minmax(0, 1fr) minmax(0, 46%); }
   .panel { border-left: 0; border-top: 1px solid var(--border); padding-bottom: env(safe-area-inset-bottom); }

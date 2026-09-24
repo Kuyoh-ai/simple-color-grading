@@ -10,7 +10,7 @@ const els = {
   fileInput: $('#fileInput'), btnOpen: $('#btnOpen'), btnOpen2: $('#btnOpen2'), btnSample: $('#btnSample'),
   btnCompare: $('#btnCompare'), btnSplit: $('#btnSplit'), btnExport: $('#btnExport'), btnTheme: $('#btnTheme'),
   categories: $('#categories'), grid: $('#presetGrid'), presetName: $('#presetName'), presetDesc: $('#presetDesc'),
-  presetControls: $('#presetControls'), btnResetPreset: $('#btnResetPreset'),
+  presetControls: $('#presetControls'), btnResetPreset: $('#btnResetPreset'), btnFav: $('#btnFav'),
   adjustControls: $('#adjustControls'), btnResetAdjust: $('#btnResetAdjust'),
   expFormat: $('#expFormat'), expQuality: $('#expQuality'), expQualityVal: $('#expQualityVal'), qualityField: $('#qualityField'),
   expScale: $('#expScale'), expInfo: $('#expInfo'), btnDownload: $('#btnDownload'),
@@ -71,8 +71,15 @@ els.btnTheme.addEventListener('click', () => applyTheme(document.documentElement
 
 /* ---------------- helpers ---------------- */
 let toastTimer;
-function toast(msg, ms = 2600) {
+/** Show a toast; `action` ({ label, run }) adds a button such as 元に戻す. */
+function toast(msg, ms = 2600, action = null) {
   els.toast.textContent = msg; els.toast.hidden = false;
+  if (action) {
+    const b = document.createElement('button');
+    b.type = 'button'; b.textContent = action.label;
+    b.addEventListener('click', () => { els.toast.hidden = true; clearTimeout(toastTimer); action.run(); });
+    els.toast.appendChild(b);
+  }
   clearTimeout(toastTimer); toastTimer = setTimeout(() => { els.toast.hidden = true; }, ms);
 }
 function busy(on, text = '処理中…') { els.busyText.textContent = text; els.busy.hidden = !on; }
@@ -266,14 +273,24 @@ els.btnSample.addEventListener('click', async () => { const b = await makeSample
 /* ---------------- presets UI ---------------- */
 function buildCategories() {
   els.categories.innerHTML = '';
-  for (const c of [CATEGORIES[0], { id: 'fav', label: '★ お気に入り' }, ...CATEGORIES.slice(1)]) {
+  for (const c of [CATEGORIES[0], { id: 'fav', label: 'お気に入り' }, ...CATEGORIES.slice(1)]) {
     const b = document.createElement('button');
     b.className = 'chip' + (c.id === state.category ? ' active' : '');
-    b.textContent = c.label; b.dataset.cat = c.id;
-    b.addEventListener('click', () => { state.category = c.id; buildCategories(); filterGrid(); });
+    b.dataset.cat = c.id;
+    if (c.id === 'fav') {
+      b.classList.add('chip-fav');
+      b.innerHTML = STAR_SVG + '<span>お気に入り</span><span class="count"></span>';
+    } else b.textContent = c.label;
+    b.addEventListener('click', () => { state.category = c.id; buildCategories(); refreshCards({ reorder: true }); });
     els.categories.appendChild(b);
   }
+  updateFavChip();
 }
+function updateFavChip() {
+  const n = els.categories.querySelector('.chip-fav .count');
+  if (n) n.textContent = state.favorites.size ? String(state.favorites.size) : '';
+}
+const STAR_SVG = '<svg viewBox="0 0 24 24" aria-hidden="true"><path d="M12 3.5l2.6 5.6 6.1.7-4.5 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.3 9.8l6.1-.7z"/></svg>';
 const cards = new Map();
 const LONG_PRESS_MS = 450;
 function buildGrid() {
@@ -290,18 +307,21 @@ function buildGrid() {
     card.append(cv, ph, nm, badge);
     if (p.id !== 'none') {
       const star = document.createElement('button');
-      star.className = 'star'; star.type = 'button'; star.title = 'お気に入り';
-      star.setAttribute('aria-label', 'お気に入りに追加/解除');
-      star.innerHTML = '<svg viewBox="0 0 24 24"><path d="M12 3.5l2.6 5.6 6.1.7-4.5 4.2 1.2 6-5.4-3-5.4 3 1.2-6L3.3 9.8l6.1-.7z"/></svg>';
+      star.className = 'star'; star.type = 'button';
+      star.innerHTML = STAR_SVG;
       star.addEventListener('pointerdown', (e) => e.stopPropagation());
       star.addEventListener('click', (e) => { e.stopPropagation(); toggleFavorite(p.id); });
       card.append(star);
     }
     attachCardInteraction(card, p.id);
     els.grid.appendChild(card);
-    cards.set(p.id, { card, cv, badge });
+    cards.set(p.id, { card, cv, badge, star: card.querySelector('.star') });
   }
-  refreshCards();
+  const empty = document.createElement('div');
+  empty.className = 'grid-empty'; empty.hidden = true;
+  empty.innerHTML = 'お気に入りはまだありません。<br>プリセットを選んで、下の「' + STAR_SVG + 'お気に入りに追加」ボタンで登録できます。';
+  els.grid.appendChild(empty);
+  refreshCards({ reorder: true });
 }
 
 /* click = select (replace stack); shift/ctrl+click or long-press = toggle in stack */
@@ -329,19 +349,32 @@ function attachCardInteraction(card, id) {
   });
 }
 
-/* ordering: favorites first, then catalogue order; visibility by category */
-function refreshCards() {
+/* ordering: favorites first, then catalogue order; visibility by category.
+   The order is only recomputed on `reorder` (category change / startup), never right after a
+   star toggle, so cards do not jump under the pointer and cause the next tap to hit another card.
+   Likewise a card un-starred inside the お気に入り category stays visible until the view changes. */
+let sortedFavs = new Set();
+function refreshCards({ reorder = false } = {}) {
+  if (reorder) sortedFavs = new Set(state.favorites);
   const order = PRESETS.map(p => p.id).sort((a, b) => {
     if (a === 'none') return -1; if (b === 'none') return 1;
-    return (state.favorites.has(b) ? 1 : 0) - (state.favorites.has(a) ? 1 : 0);
+    return (sortedFavs.has(b) ? 1 : 0) - (sortedFavs.has(a) ? 1 : 0);
   });
+  let favVisible = 0;
   order.forEach((id, i) => {
-    const { card, badge } = cards.get(id);
+    const { card, badge, star } = cards.get(id);
     const p = PRESET_MAP[id];
     card.style.order = i;
     const fav = state.favorites.has(id);
     card.classList.toggle('fav', fav);
-    card.hidden = !(id === 'none' || state.category === 'all' || (state.category === 'fav' ? fav : p.cat === state.category));
+    if (star) {
+      star.title = fav ? 'お気に入りから外す (F)' : 'お気に入りに追加 (F)';
+      star.setAttribute('aria-label', star.title);
+      star.setAttribute('aria-pressed', String(fav));
+    }
+    const inFavView = fav || sortedFavs.has(id);
+    card.hidden = !(id === 'none' || state.category === 'all' || (state.category === 'fav' ? inFavView : p.cat === state.category));
+    if (id !== 'none' && state.category === 'fav' && !card.hidden) favVisible++;
     const idx = state.stack.indexOf(id);
     const inStack = idx >= 0 || (id === 'none' && state.stack.length === 0);
     card.classList.toggle('active', id === state.presetId || (id === 'none' && state.stack.length === 0));
@@ -350,16 +383,34 @@ function refreshCards() {
     badge.textContent = idx + 1;
     void inStack;
   });
+  const empty = els.grid.querySelector('.grid-empty');
+  if (empty) { empty.hidden = !(state.category === 'fav' && favVisible === 0); empty.style.order = order.length; }
   renderStackBar();
+  updateFavButton();
 }
-function filterGrid() { refreshCards(); }
 
-function toggleFavorite(id) {
-  if (state.favorites.has(id)) state.favorites.delete(id); else state.favorites.add(id);
+function toggleFavorite(id, { undoable = true } = {}) {
+  const added = !state.favorites.has(id);
+  if (added) state.favorites.add(id); else state.favorites.delete(id);
   saveFavorites();
   refreshCards();
-  toast(state.favorites.has(id) ? `★ ${PRESET_MAP[id].name} をお気に入りに追加` : `${PRESET_MAP[id].name} をお気に入りから解除`, 1500);
+  updateFavChip();
+  const name = PRESET_MAP[id].name;
+  toast(added ? `「${name}」をお気に入りに追加しました` : `「${name}」をお気に入りから外しました`, 3500,
+    undoable ? { label: '元に戻す', run: () => toggleFavorite(id, { undoable: false }) } : null);
 }
+function updateFavButton() {
+  const id = state.presetId;
+  const b = els.btnFav;
+  b.hidden = id === 'none';
+  if (b.hidden) return;
+  const fav = state.favorites.has(id);
+  b.classList.toggle('on', fav);
+  b.setAttribute('aria-pressed', String(fav));
+  b.innerHTML = STAR_SVG + (fav ? '<span>お気に入り済み</span>' : '<span>お気に入りに追加</span>');
+  b.title = fav ? 'クリックでお気に入りから外す (F)' : 'このプリセットをお気に入りに追加 (F)';
+}
+els.btnFav.addEventListener('click', () => { if (state.presetId !== 'none') toggleFavorite(state.presetId); });
 
 function afterStackChange() {
   refreshCards();
