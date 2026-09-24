@@ -68,10 +68,13 @@ export class Engine {
     const gl = this.gl;
     const tex = gl.createTexture();
     gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, true);
+    // Never rely on UNPACK_FLIP_Y_WEBGL: Chrome ignores it for ImageBitmap sources,
+    // which made orientation depend on the source type. Row 0 = image top for all sources;
+    // the vertex shader flips only when drawing to the canvas (see u_flip in draw()).
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
     gl.pixelStorei(gl.UNPACK_COLORSPACE_CONVERSION_WEBGL, gl.NONE);
     gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, source);
-    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
@@ -128,6 +131,7 @@ export class Engine {
     gl.bindFramebuffer(gl.FRAMEBUFFER, target ? target.fb : null);
     gl.viewport(0, 0, w, h);
     gl.useProgram(p.prog);
+    gl.uniform1f(this.uniform(p, 'u_flip'), target ? 0 : 1);
     gl.bindVertexArray(this.vao);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }

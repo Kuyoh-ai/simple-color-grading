@@ -1,11 +1,16 @@
 // GLSL ES 3.00 shaders for the grading pipeline.
 // Pipeline: grade -> (downsample chain -> gaussian H/V) -> final composite
 
+// u_flip = 1 when drawing to the canvas: textures keep the image's top row at v = 0
+// (no UNPACK_FLIP_Y, which browsers ignore for ImageBitmap sources), so the final
+// on-screen draw flips vertically while intermediate FBO passes keep texel order.
 export const VS = `#version 300 es
 out vec2 v_uv;
+uniform float u_flip;
 void main(){
   vec2 p = vec2(float((gl_VertexID << 1) & 2), float(gl_VertexID & 2));
   v_uv = p;
+  if (u_flip > 0.5) v_uv.y = 1.0 - v_uv.y;
   gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
 }`;
 
