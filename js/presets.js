@@ -11,6 +11,8 @@ export const NEUTRAL = {
   halation: 0, clarity: 0, sharpen: 0, chromAb: 0,
   grain: 0, grainSize: 1.5, grainType: 0,
   vignette: 0, vignetteFeather: 0.5,
+  posterize: 0, posterSoft: 0.08, outline: 0, outlineWidth: 1, outlineColor: [0.06, 0.04, 0.08],
+  halftone: 0, halftoneSize: 6, focusBlur: 0, focusRadius: 0.45,
 };
 
 // Keys scaled by the master intensity slider (interpolated toward NEUTRAL).
@@ -18,6 +20,7 @@ export const LERP_KEYS = new Set([
   'exposure', 'contrast', 'saturation', 'vibrance', 'temperature', 'tint', 'highlights', 'shadows',
   'fade', 'hueShift', 'bleach', 'mono', 'filmic', 'lift', 'gamma', 'gain', 'shadowTint', 'highTint',
   'gmAmt', 'glow', 'halation', 'clarity', 'sharpen', 'chromAb', 'grain', 'vignette',
+  'outline', 'halftone', 'focusBlur',
 ]);
 
 export const CONTROL_DEFS = {
@@ -48,6 +51,14 @@ export const CONTROL_DEFS = {
   grainSize: { label: 'ノイズの粒サイズ', min: 0.5, max: 24, step: 0.1 },
   vignette: { label: '周辺減光', min: 0, max: 1, step: 0.01 },
   vignetteFeather: { label: '減光の広がり', min: 0, max: 1, step: 0.01 },
+  posterize: { label: '階調数 (セル塗り, 0=なし)', min: 0, max: 12, step: 1 },
+  posterSoft: { label: '階調の境界の柔らかさ', min: 0.005, max: 0.5, step: 0.005 },
+  outline: { label: '主線 (アウトライン)', min: 0, max: 1.5, step: 0.01 },
+  outlineWidth: { label: '主線の太さ', min: 0.5, max: 4, step: 0.1 },
+  halftone: { label: 'ハーフトーン', min: 0, max: 1, step: 0.01 },
+  halftoneSize: { label: 'ハーフトーンの間隔', min: 3, max: 24, step: 0.5 },
+  focusBlur: { label: '周辺ぼかし', min: 0, max: 1, step: 0.01 },
+  focusRadius: { label: 'ピントの範囲', min: 0, max: 1, step: 0.01 },
 };
 
 export const ADJUST_KEYS = [
@@ -62,6 +73,7 @@ export const CATEGORIES = [
   { id: 'camera', label: 'カメラアプリ' },
   { id: 'mono', label: 'モノクロ' },
   { id: 'illust', label: 'イラスト' },
+  { id: 'cel', label: 'セルルック' },
 ];
 
 const P = (id, name, cat, desc, params, controls) => ({ id, name, cat, desc, params, controls });
@@ -265,6 +277,65 @@ export const PRESETS = [
     '彩度を落とし明るく、フェードで淡いパステル風に。',
     { fade: 0.2, exposure: 0.15, saturation: -0.15, contrast: -0.1, highTint: [0.04, 0.02, 0.03] },
     ['fade', 'exposure', 'saturation']),
+
+  // ---- CLIP STUDIO TIPS「フィルターで作品を仕上げる」(oyunorka) の手順を再現 ----
+  P('filter_finish_set', 'フィルター仕上げセット', 'illust',
+    '記事の流れを一括適用: パーリンノイズ → 周辺をガウスぼかし → シャープ → 色調補正(コントラスト/彩度) → RGBずらし。',
+    { grain: 0.18, grainType: 1, grainSize: 6, focusBlur: 0.35, focusRadius: 0.5, blurRadius: 0.012,
+      sharpen: 0.35, contrast: 0.12, saturation: 0.08, chromAb: 0.3 },
+    ['grain', 'focusBlur', 'sharpen', 'contrast', 'saturation', 'chromAb']),
+  P('focus_blur', '周辺ぼかし (選択範囲ぼかし風)', 'illust',
+    '見せたい中心を残して周辺にガウスぼかし。投げなわ選択→ぼかしの手順を放射状マスクで再現。ピントの範囲と半径を調整できます。',
+    { focusBlur: 0.6, focusRadius: 0.4, blurRadius: 0.015 },
+    ['focusBlur', 'focusRadius', 'blurRadius']),
+  P('sharpen_finish', 'シャープ仕上げ', 'illust',
+    '線や質感を締めるシャープフィルター。線画の甘さやぼやけを補正します。',
+    { sharpen: 0.6, clarity: 0.1, blurRadius: 0.02 },
+    ['sharpen', 'clarity']),
+  P('tone_curve_finish', '色調補正レイヤー仕上げ', 'illust',
+    'トーンカーブ/レベル補正による軽いS字コントラストと彩度アップ。仕上げの定番。',
+    { contrast: 0.18, saturation: 0.1, vibrance: 0.1, shadows: -0.05 },
+    ['contrast', 'saturation', 'vibrance', 'shadows']),
+  P('perlin_soft', 'パーリンノイズ＋ソフトぼかし', 'illust',
+    'パーリンノイズで質感を足しつつ、ぼかしコピーを薄く重ねて柔らかく馴染ませる組み合わせ。',
+    { grain: 0.2, grainType: 1, grainSize: 5, glow: 0.2, glowMode: 3, blurRadius: 0.01 },
+    ['grain', 'grainSize', 'glow', 'blurRadius']),
+
+  // ---------------- セルルック (Cel look) ----------------
+  P('cel_basic', 'セル塗り (ベーシック)', 'cel',
+    '明度を数段階に量子化し、主線を検出して黒で引く基本的なセルルック変換。',
+    { posterize: 4, posterSoft: 0.06, outline: 0.8, outlineWidth: 1.2, saturation: 0.1, contrast: 0.1 },
+    ['posterize', 'posterSoft', 'outline', 'outlineWidth', 'saturation', 'contrast']),
+  P('cel_zzz', 'ZZZ風 (アーバン・コミック)', 'cel',
+    'ゼンレスゾーンゼロ風: 高彩度・高コントラストのセル塗り、太めの主線、影にコミック調ハーフトーン、色収差とネオンの淡いブルーム、細かなノイズ。',
+    { posterize: 5, posterSoft: 0.05, outline: 1.0, outlineWidth: 1.4, outlineColor: [0.05, 0.03, 0.07],
+      halftone: 0.55, halftoneSize: 6,
+      saturation: 0.3, vibrance: 0.15, contrast: 0.3, shadows: -0.1,
+      shadowTint: [-0.02, -0.02, 0.06], highTint: [0.05, 0.02, 0.0],
+      chromAb: 0.35, glow: 0.18, glowMode: 0, glowThreshold: 0.7, blurRadius: 0.03,
+      grain: 0.06, grainType: 0, grainSize: 1.2, vignette: 0.12 },
+    ['posterize', 'outline', 'halftone', 'halftoneSize', 'saturation', 'contrast', 'chromAb', 'glow']),
+  P('cel_gg', 'GG風 (2トーン・アニメ調)', 'cel',
+    'ギルティギア風: 影を2〜3段階のハードエッジで落とすトゥーンシェード、太い主線、暖色寄りで少し落ち着いた彩度、強めの明暗と軽いシャープ。',
+    { posterize: 4, posterSoft: 0.02, outline: 1.2, outlineWidth: 1.8, outlineColor: [0.08, 0.05, 0.06],
+      saturation: 0.02, vibrance: 0.1, contrast: 0.18, temperature: 0.1, shadows: 0.1,
+      shadowTint: [-0.03, -0.01, 0.05], highTint: [0.06, 0.03, -0.02],
+      sharpen: 0.3, grain: 0.05, grainType: 1, grainSize: 4, filmic: 0.25 },
+    ['posterize', 'posterSoft', 'outline', 'outlineWidth', 'contrast', 'temperature', 'saturation']),
+  P('cel_comic', 'アメコミ調 (ハーフトーン強)', 'cel',
+    '荒いハーフトーンと太い主線、少数の階調でコミック印刷風に。',
+    { posterize: 3, posterSoft: 0.04, outline: 1.3, outlineWidth: 2.0, halftone: 0.9, halftoneSize: 10,
+      saturation: 0.15, contrast: 0.25, grain: 0.1, grainType: 1, grainSize: 8 },
+    ['posterize', 'outline', 'halftone', 'halftoneSize', 'contrast']),
+  P('cel_soft', 'ソフトセル (厚塗りアニメ)', 'cel',
+    '境界を柔らかくした多階調のセル塗りに、細い主線と淡いディフュージョン。近年の劇場アニメ風。',
+    { posterize: 7, posterSoft: 0.2, outline: 0.5, outlineWidth: 1.0, glow: 0.22, glowMode: 0, glowThreshold: 0.4, blurRadius: 0.02,
+      saturation: 0.05, contrast: 0.08 },
+    ['posterize', 'posterSoft', 'outline', 'glow']),
+  P('ink_lines', '主線のみ (線画抽出)', 'cel',
+    'エッジ検出で主線だけを重ねます。既存のイラストの線を締めたい時に。',
+    { outline: 1.0, outlineWidth: 1.0 },
+    ['outline', 'outlineWidth']),
 ];
 
 export const PRESET_MAP = Object.fromEntries(PRESETS.map(p => [p.id, p]));

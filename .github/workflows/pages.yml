@@ -1,8 +1,14 @@
 name: Deploy to GitHub Pages
 
+# Deploys the repository root as a static site.
+# Runs on the default branch (currently claude/sharp-lamport-gx569c) and on main,
+# so the site is published automatically on every push without manual setup:
+# `enablement: true` turns GitHub Pages on for the repository the first time.
 on:
   push:
-    branches: [main]
+    branches:
+      - main
+      - claude/sharp-lamport-gx569c
   workflow_dispatch:
 
 permissions:
@@ -23,6 +29,8 @@ jobs:
     steps:
       - uses: actions/checkout@v4
       - uses: actions/configure-pages@v5
+        with:
+          enablement: true
       - uses: actions/upload-pages-artifact@v3
         with:
           path: .

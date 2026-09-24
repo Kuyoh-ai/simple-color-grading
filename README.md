@@ -16,6 +16,8 @@
   - 薄いノイズ仕上げ: パーリンノイズ（値ノイズ 3 オクターブ）をオーバーレイ・不透明度 20% 前後で合成
   - 大陸塗り風仕上げ: 影を寒色・光を暖色に分離する色相差、高コントラスト・高彩度、覆い焼き風の加算発光、色収差、シャープ、グラデーションマップ
   - 逆光加工 / 色収差 (RGBずらし) / アニメスクショ風 / グラデーションマップ / 厚塗りマット / 紙テクスチャ など
+  - CLIP STUDIO TIPS「フィルターで作品を仕上げる」(oyunorka) の手順を再現: フィルター仕上げセット（パーリンノイズ → 周辺ぼかし → シャープ → 色調補正 → RGBずらし）、周辺ぼかし（選択範囲ぼかし風）、シャープ仕上げ、色調補正レイヤー仕上げ、パーリンノイズ＋ソフトぼかし
+- **セルルック変換**: 明度の階調化（バンド数・境界の柔らかさ）、Sobel エッジ検出による主線、影へのコミック調ハーフトーンをシェーダーで実装。ベーシック / ZZZ風（高彩度・太い主線・ハーフトーン・色収差・ブルーム）/ GG風（2〜3トーンのハードエッジ、太い主線、暖色寄り）/ アメコミ調 / ソフトセル / 主線のみ。
 
 ## 技術
 
@@ -32,9 +34,9 @@ python3 -m http.server 8000
 # → http://localhost:8000/
 ```
 
-## GitHub Pages へのデプロイ
+## GitHub Pages へのデプロイ（自動）
 
-`.github/workflows/pages.yml` が `main` ブランチへの push でリポジトリ直下を GitHub Pages にデプロイします。リポジトリの Settings → Pages で Source を「GitHub Actions」にしてください。（「Deploy from a branch」でルートを指定しても動作します。）
+`.github/workflows/pages.yml` が `main` および既定ブランチ（現在は `claude/sharp-lamport-gx569c`）への push のたびにリポジトリ直下を GitHub Pages に自動デプロイします。`actions/configure-pages` の `enablement: true` により初回実行時に Pages が自動で有効化されるため、手動設定は不要です（Actions → Deploy to GitHub Pages から手動実行も可能）。公開 URL はワークフローの `github-pages` 環境に表示されます。
 
 ## 制限事項
 

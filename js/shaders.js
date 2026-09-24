@@ -133,8 +133,9 @@ uniform sampler2D u_graded, u_blur, u_orig;
 uniform vec2 u_res;
 uniform float u_glow, u_glowThreshold, u_glowMode, u_halation, u_clarity, u_sharpen, u_chromAb;
 uniform float u_grain, u_grainSize, u_grainType, u_vignette, u_vignetteFeather;
+uniform float u_posterize, u_posterSoft, u_outline, u_outlineWidth, u_halftone, u_halftoneSize, u_focusBlur, u_focusRadius;
 uniform float u_split, u_seed, u_showOrig;
-uniform vec3 u_glowTint;
+uniform vec3 u_glowTint, u_outlineColor;
 ${COMMON}
 float hash(vec2 p){
   p = fract(p * vec2(123.34, 456.21));
@@ -161,7 +162,53 @@ void main(){
     c = texture(u_graded, v_uv).rgb;
   }
   vec3 bl = texture(u_blur, v_uv).rgb;
+  // selective (radial) blur: keeps the centre sharp, blurs toward the edges
+  if (u_focusBlur > 0.0) {
+    float r = length(d * 2.0) / 1.41421;
+    c = mix(c, bl, u_focusBlur * smoothstep(u_focusRadius, min(u_focusRadius + 0.5, 1.2), r));
+  }
   if (u_clarity != 0.0) c = clamp(c + (c - bl) * u_clarity * 0.9, 0.0, 1.0);
+  // cel-look: quantise brightness into bands while keeping hue
+  if (u_posterize > 0.5) {
+    float l = dot(c, LW);
+    float n = u_posterize;
+    float x = l * n;
+    float f = fract(x);
+    float soft = max(u_posterSoft, 0.001);
+    float q = (floor(x) + smoothstep(0.5 - soft, 0.5 + soft, f)) / n;
+    q = mix(q, l, 0.15); // keep a hint of the original gradient so it does not look flat
+    c = clamp(c * (max(q, 0.0) + 0.02) / (l + 0.02), 0.0, 1.0);
+  }
+  // cel-look: ink outlines from a Sobel edge detector on the graded image
+  if (u_outline > 0.0) {
+    vec2 st = px * max(s, 1.0) * u_outlineWidth;
+    float tl = dot(texture(u_graded, v_uv + vec2(-st.x,  st.y)).rgb, LW);
+    float t0 = dot(texture(u_graded, v_uv + vec2( 0.0,   st.y)).rgb, LW);
+    float tr = dot(texture(u_graded, v_uv + vec2( st.x,  st.y)).rgb, LW);
+    float l0 = dot(texture(u_graded, v_uv + vec2(-st.x,  0.0)).rgb, LW);
+    float r0 = dot(texture(u_graded, v_uv + vec2( st.x,  0.0)).rgb, LW);
+    float bL = dot(texture(u_graded, v_uv + vec2(-st.x, -st.y)).rgb, LW);
+    float b0 = dot(texture(u_graded, v_uv + vec2( 0.0,  -st.y)).rgb, LW);
+    float br = dot(texture(u_graded, v_uv + vec2( st.x, -st.y)).rgb, LW);
+    float gx = (tr + 2.0*r0 + br) - (tl + 2.0*l0 + bL);
+    float gy = (tl + 2.0*t0 + tr) - (bL + 2.0*b0 + br);
+    float e = length(vec2(gx, gy));
+    float line = smoothstep(0.12, 0.45, e) * u_outline;
+    c = mix(c, u_outlineColor, clamp(line, 0.0, 1.0));
+  }
+  // comic halftone dots in the shadows
+  if (u_halftone > 0.0) {
+    float cell = max(u_halftoneSize * s, 2.0);
+    vec2 p = gl_FragCoord.xy;
+    mat2 rot = mat2(0.7071, -0.7071, 0.7071, 0.7071);
+    vec2 g = rot * p / cell;
+    vec2 cp = fract(g) - 0.5;
+    float lum = dot(c, LW);
+    float shade = 1.0 - smoothstep(0.15, 0.65, lum);      // how much shadow here
+    float radius = 0.5 * shade;                            // bigger dots in darker areas
+    float dot_ = 1.0 - smoothstep(radius - 0.12, radius + 0.05, length(cp));
+    c = mix(c, c * 0.55, dot_ * u_halftone * step(0.05, shade));
+  }
   if (u_sharpen > 0.0) {
     vec2 st = px * max(s, 1.0);
     vec3 n = texture(u_graded, v_uv + vec2(st.x, 0.0)).rgb + texture(u_graded, v_uv - vec2(st.x, 0.0)).rgb

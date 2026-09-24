@@ -164,7 +164,7 @@ export class Engine {
     this.draw(this.pGrade, G, W, H);
 
     // --- pass 2: blur chain (only when needed)
-    const needBlur = params.glow > 0 || params.clarity !== 0 || params.halation > 0;
+    const needBlur = params.glow > 0 || params.clarity !== 0 || params.halation > 0 || params.focusBlur > 0;
     let blurTex = G.tex;
     if (needBlur) {
       let sigma = params.blurRadius * Math.min(W, H);
@@ -210,6 +210,10 @@ export class Engine {
       sharpen: params.sharpen, chromAb: params.chromAb, grain: params.grain,
       grainSize: params.grainSize, grainType: params.grainType,
       vignette: params.vignette, vignetteFeather: params.vignetteFeather,
+      posterize: params.posterize, posterSoft: params.posterSoft,
+      outline: params.outline, outlineWidth: params.outlineWidth, outlineColor: params.outlineColor,
+      halftone: params.halftone, halftoneSize: params.halftoneSize,
+      focusBlur: params.focusBlur, focusRadius: params.focusRadius,
       split: opts.split ?? 0, seed: this.seed, showOrig: opts.showOrig ? 1 : 0,
     });
     this.draw(this.pFinal, opts.target || null, W, H);
